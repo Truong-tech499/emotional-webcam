@@ -1,0 +1,162 @@
+import cv2
+import numpy as np
+from tensorflow.keras.models import load_model
+from keras_preprocessing.image import img_to_array
+from PIL import ImageFont, ImageDraw, Image, ImageTk
+import tkinter as tk
+from tkinter import filedialog
+
+# Load model và cascade
+face_classifier = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+classifier = load_model('emotion_detection.h5')
+class_labels = ['Giận dữ', 'Ghê sợ', 'Sợ hãi', 'Hạnh phúc', 'Buồn', 'Bất ngờ', 'Trung lập']
+
+# Font hỗ trợ tiếng Việt
+font = ImageFont.truetype("./arial.ttf", 32)
+b, g, r, a = 0, 255, 0, 0
+
+# Biến toàn cục
+mode = "video"
+cap = cv2.VideoCapture(0)
+image_frame = None
+def resize_bilinear(image, new_w, new_h):
+    h, w, c = image.shape
+    resized = np.zeros((new_h, new_w, c), dtype=np.uint8)
+
+    # Tỷ lệ
+    x_ratio = float(w - 1) / (new_w - 1) if new_w > 1 else 0
+    y_ratio = float(h - 1) / (new_h - 1) if new_h > 1 else 0
+
+    for i in range(new_h):
+        for j in range(new_w):
+            x_l = int(x_ratio * j)
+            y_l = int(y_ratio * i)
+            x_h = min(x_l + 1, w - 1)
+            y_h = min(y_l + 1, h - 1)
+
+            x_weight = (x_ratio * j) - x_l
+            y_weight = (y_ratio * i) - y_l
+
+            a = image[y_l, x_l]
+            b = image[y_l, x_h]
+            c1 = image[y_h, x_l]
+            d = image[y_h, x_h]
+
+            pixel = (a * (1 - x_weight) * (1 - y_weight) +
+                     b * x_weight * (1 - y_weight) +
+                     c1 * (1 - x_weight) * y_weight +
+                     d * x_weight * y_weight)
+
+            resized[i, j] = pixel.astype(np.uint8)
+
+    return resized
+
+
+# Hàm nhận diện cảm xúc
+def detect_emotion(frame):
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    faces = face_classifier.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=3)
+    labels = []
+
+    for (x, y, w, h) in faces:
+        cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
+        roi_gray = gray[y:y + h, x:x + w]
+        roi_gray = cv2.resize(roi_gray, (48, 48), interpolation=cv2.INTER_AREA)
+
+        roi = roi_gray.astype('float') / 255.0
+        roi = img_to_array(roi)
+        roi = np.expand_dims(roi, axis=0)
+
+        preds = classifier.predict(roi)[0]
+        label = class_labels[preds.argmax()]
+        labels.append(label)
+
+    return frame, labels
+
+
+
+# Cập nhật frame trong Tkinter
+def update_frame():
+    global mode, cap, image_frame
+    if mode == "video":
+        ret, frame = cap.read()
+        if not ret:
+            return
+        frame, labels = detect_emotion(frame)
+    else:  # ảnh tĩnh
+        frame, labels = detect_emotion(image_frame.copy())
+
+    # Convert ảnh sang Tkinter
+    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    img = Image.fromarray(frame)
+    imgtk = ImageTk.PhotoImage(image=img)
+    lbl_video.imgtk = imgtk
+    lbl_video.configure(image=imgtk)
+
+    # Hiển thị nhãn bên dưới ảnh
+    if labels:
+        lbl_caption.config(text=" , ".join(labels), font=("Arial", 20), fg="green")
+    else:
+        lbl_caption.config(text="Không phát hiện khuôn mặt", font=("Arial", 20), fg="red")
+
+    lbl_video.after(10, update_frame)
+
+
+# Chọn ảnh
+
+def open_image():
+    global mode, image_frame
+    file_path = filedialog.askopenfilename(filetypes=[("Image files", "*.jpg;*.png;*.jpeg")])
+    if file_path:
+        image_frame = cv2.imread(file_path)
+
+        # Lấy kích thước ảnh gốc
+        h, w, _ = image_frame.shape
+
+        # Phóng to gấp 4 lần bằng nội suy song tuyến tự viết
+        new_w = int(w * 4)
+        new_h = int(h * 4)
+        image_frame = resize_bilinear(image_frame, new_w, new_h)
+
+        mode = "image"
+
+
+
+
+# Quay lại video
+def reload_video():
+    global mode
+    mode = "video"
+
+# Thoát
+def quit_app():
+    global cap
+    cap.release()
+    root.destroy()
+
+# -------------------- GUI --------------------
+root = tk.Tk()
+root.title("Emotion Detection")
+root.state("zoomed")  # full màn hình
+
+
+lbl_video = tk.Label(root)
+lbl_video.pack()
+
+lbl_caption = tk.Label(root, text="", pady=10)
+lbl_caption.pack()
+frame_btn = tk.Frame(root)
+frame_btn.pack()
+
+btn_open = tk.Button(frame_btn, text="Chọn ảnh", command=open_image, width=15, height=2)
+btn_open.grid(row=0, column=0, padx=10, pady=10)
+
+btn_reload = tk.Button(frame_btn, text="Quay lại Video", command=reload_video, width=15, height=2)
+btn_reload.grid(row=0, column=1, padx=10, pady=10)
+
+btn_quit = tk.Button(frame_btn, text="Thoát", command=quit_app, width=15, height=2)
+btn_quit.grid(row=0, column=2, padx=10, pady=10)
+
+# Bắt đầu loop
+update_frame()
+root.mainloop()
