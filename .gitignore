@@ -42,9 +42,29 @@ runs/
 reinforce_images/
 reinforce_backup_*/
 
+# Checkpoints and models
+checkpoints/
+checkpoints/**
+
+# Data (exclude large datasets)
+data/
+data/**
+
 # Logs
 *.log
+
+# Caches
+.pytest_cache/
+.mypy_cache/
+.cache/
+
+# Coverage
+.coverage
+coverage.xml
+htmlcov/
 
 # OS specific
 .DS_Store
 Thumbs.db
+desktop.ini
+ehthumbs.db

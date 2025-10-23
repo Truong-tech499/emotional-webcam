@@ -65,21 +65,27 @@ Hoặc trong Jupyter Notebook:
 
 ## Installation
 
-1. Clone this repository:
-```bash
+1. Clone repository và cài đặt môi trường:
+```powershell
+# Clone repository
 git clone https://github.com/Truong_Tech499/emotion-recognition.git
 cd emotion-recognition
-```
 
-2. Create conda environment (recommended):
-```bash
+# Tạo môi trường conda (recommended)
 conda env create -f environment.yml
-conda activate emotion
+conda activate emotion_env
+
+# Hoặc sử dụng pip
+pip install -r requirements.txt
 ```
 
-Or install requirements with pip:
-```bash
-pip install -r requirements.txt
+2. Download face detection model:
+```powershell
+# Tạo thư mục models
+mkdir models
+
+# Download Haar Cascade model
+curl -o models/haarcascade_frontalface_default.xml https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/haarcascade_frontalface_default.xml
 ```
 
 ## Dataset Structure
@@ -101,13 +107,48 @@ data/
     └── ...
 ```
 
-## Training
+## Training & Detection
 
-To train the model:
+### Training Model
 
-```bash
-python train.py
+```powershell
+# Kích hoạt môi trường
+conda activate emotion_env
+
+# Set biến môi trường để tránh lỗi OpenMP
+$env:KMP_DUPLICATE_LIB_OK='TRUE'
+
+# Train model (đường dẫn tương đối từ root project)
+python src/train.py
+
+# Theo dõi quá trình training với TensorBoard
+tensorboard --logdir=runs/emotion_train
 ```
+
+### Inference/Detection
+
+```powershell
+# Kích hoạt môi trường
+conda activate emotion_env
+
+# Set biến môi trường
+$env:KMP_DUPLICATE_LIB_OK='TRUE'
+
+# Real-time detection với webcam
+python src/detect.py
+
+# Detection với ảnh có sẵn
+python src/detect.py --image path/to/image.jpg
+
+# Các tham số khác
+python src/detect.py --help
+```
+
+Các tham số cho detect.py:
+- `--image`: Đường dẫn đến ảnh cần phân tích (mặc định: sử dụng webcam)
+- `--cam`: Index của camera (mặc định: 0)
+- `--smooth`: Kích thước cửa sổ làm mượt dự đoán (mặc định: 15 frames)
+- `--detector`: Backend phát hiện khuôn mặt ("mediapipe" hoặc "haar", mặc định: mediapipe nếu có)
 
 Training parameters can be modified in `train.py`. The best model will be saved as `emotion_cnn.pth`.
 

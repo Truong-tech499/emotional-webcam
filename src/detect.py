@@ -32,9 +32,9 @@ except ImportError:
 import argparse
 
 # Paths
-MODEL_PATH = r"D:\nam 4\emotion_cnn.pth"
+MODEL_PATH = "emotion_cnn.pth"
 IMAGE_PATH = None  # None để dùng webcam
-FACE_CASCADE_PATH = "haarcascade_frontalface_default.xml"
+FACE_CASCADE_PATH = "models/haarcascade_frontalface_default.xml"
 REINFORCE_DIR = "reinforce_images"  # Directory for saving misclassified images
 os.makedirs(REINFORCE_DIR, exist_ok=True)
 
@@ -69,7 +69,7 @@ BLACK = (0, 0, 0)
 class EmotionModel(nn.Module):
     def __init__(self, num_classes):
         super().__init__()
-        self.model = models.efficientnet_b0(weights="IMAGENET1K_V1")
+        self.model = models.efficientnet_b3(weights="IMAGENET1K_V1")
         in_features = self.model.classifier[1].in_features
         self.model.classifier[1] = nn.Linear(in_features, num_classes)
 
@@ -115,13 +115,26 @@ transform = transforms.Compose([
 
 
 def apply_clahe_to_bgr(face_bgr):
-    """Apply CLAHE to improve contrast on a BGR numpy array and return PIL RGB image."""
+    """Apply advanced preprocessing on a BGR numpy array and return PIL RGB image."""
+    # 1. Convert to LAB color space for better contrast enhancement
     lab = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
+    
+    # 2. Apply CLAHE with moderate parameters
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     cl = clahe.apply(l)
+    
+    # 3. Denoise the image slightly to reduce noise amplification from CLAHE
     merged = cv2.merge((cl, a, b))
-    rgb = cv2.cvtColor(merged, cv2.COLOR_LAB2RGB)
+    denoised = cv2.fastNlMeansDenoisingColored(
+        cv2.cvtColor(merged, cv2.COLOR_LAB2BGR),
+        None, 10, 10, 7, 21
+    )
+    
+    # 4. Convert back to RGB for model input
+    rgb = cv2.cvtColor(denoised, cv2.COLOR_BGR2RGB)
+    
+    # 5. Convert to PIL Image
     return Image.fromarray(rgb)
 
 
@@ -206,7 +219,7 @@ def detect_faces(frame: np.ndarray) -> List[Tuple[int, int, int, int]]:
                 
                 faces.append((x, y, width, height))
     else:
-        # Haar cascade fallback
+        # Haar cascade fallback with improved parameters
         if not hasattr(detect_faces, "cascade"):
             cascade = cv2.CascadeClassifier(FACE_CASCADE_PATH)
             if cascade.empty():
@@ -214,9 +227,25 @@ def detect_faces(frame: np.ndarray) -> List[Tuple[int, int, int, int]]:
             detect_faces.cascade = cascade
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        # Apply histogram equalization to improve detection
+        gray = cv2.equalizeHist(gray)
+        
+        # Detect with stricter parameters
         faces = detect_faces.cascade.detectMultiScale(
-            gray, scaleFactor=1.3, minNeighbors=5
+            gray,
+            scaleFactor=1.1,  # Smaller scale factor for more accurate detection
+            minNeighbors=6,   # More neighbors required for more reliable detection
+            minSize=(30, 30), # Minimum face size
+            maxSize=(300, 300) # Maximum face size
         )
+        
+        # Filter out faces with extreme aspect ratios
+        filtered_faces = []
+        for (x, y, w, h) in faces:
+            aspect_ratio = float(w) / h
+            if 0.5 <= aspect_ratio <= 1.5:  # Normal face aspect ratio range
+                filtered_faces.append((x, y, w, h))
+        faces = filtered_faces
     
     return faces
 
@@ -429,13 +458,32 @@ def main():
             # update prediction history (store full prediction tuple)
             face_data[matched_id]['predictions'].append((curr_emotion, curr_prob))
 
-            # compute smoothed emotion using weighted sum over history
+            # compute smoothed emotion using weighted moving average
             pred_queue = face_data[matched_id]['predictions']
             if len(pred_queue) > 0:
+                # Calculate weighted scores with more weight on recent predictions
                 emotion_scores = {}
-                for emotion, prob in pred_queue:
-                    emotion_scores[emotion] = emotion_scores.get(emotion, 0) + prob
-                smoothed_emotion = max(emotion_scores.items(), key=lambda x: x[1])[0]
+                total_weight = 0
+                for i, (emotion, prob) in enumerate(pred_queue):
+                    weight = (i + 1) / len(pred_queue)  # More weight to recent predictions
+                    emotion_scores[emotion] = emotion_scores.get(emotion, 0) + prob * weight
+                    total_weight += weight
+                
+                # Normalize scores
+                for emotion in emotion_scores:
+                    emotion_scores[emotion] /= total_weight
+                
+                # Only accept emotion if its score is significantly higher
+                sorted_emotions = sorted(emotion_scores.items(), key=lambda x: x[1], reverse=True)
+                if len(sorted_emotions) > 1:
+                    top_score = sorted_emotions[0][1]
+                    second_score = sorted_emotions[1][1]
+                    if top_score > second_score * 1.2:  # 20% threshold
+                        smoothed_emotion = sorted_emotions[0][0]
+                    else:
+                        smoothed_emotion = curr_emotion
+                else:
+                    smoothed_emotion = curr_emotion
             else:
                 smoothed_emotion = curr_emotion
 
